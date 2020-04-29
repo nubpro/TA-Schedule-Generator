@@ -1,0 +1,547 @@
+<html>
+    <head>
+        <title>APU Lab Schedule</title>
+        <meta
+            name="viewport"
+            content="width=device-width, initial-scale=1, shrink-to-fit=no"
+        />
+        <link href="style.css" type="text/css" rel="stylesheet" />
+    </head>
+    <body>
+        <div class="container">
+            <div id="content">
+                <!-- Schedule goes here -->
+                <div class="TA4Lyfe">
+                    <img src="<?php echo get_random_file('TA4Lyfe/1')?>" />
+                </div>
+            </div>
+
+            <div class="footer">
+                <div class="menu">
+                    <select class="date_dropdown">
+                        <!-- Options are listed here magically -->
+                        <option value="" selected disabled hidden
+                            >Pick a date</option
+                        >
+                    </select>
+                </div>
+
+                <div class="about">
+                    <div class="left">
+                        APU Lab Schedule Generator <span class="stats"></span>
+                    </div>
+                    <div class="right">Created by Chai</div>
+                </div>
+            </div>
+        </div>
+
+        <script src="js/jquery-3.3.1.min.js"></script>
+        <script src="js/script.js"></script>
+        <script>
+            initialize();
+
+            $('.date_dropdown').on('change', function () {
+                var info = {
+                    date: this.value,
+                    location: 'NEW CAMPUS',
+                    room: 'Tech',
+                };
+
+                run(info);
+            });
+
+            // Configure (STAY AWAY NOOBS!)
+            const CONFIG = {
+                // Standard schedule
+                stdOpenTime: 0830,
+                stdCloseTime: 1900,
+
+                intakeSeparator: ' / ',
+                moduleSeparator: ' / ',
+                availableMessage: 'Available for Students',
+                closeMessage: 'Closed',
+
+                initialTime: 0830,
+                totalPeriod: 27,
+                gapPeriod: 30 * 60, // In seconds
+            };
+
+            // Optional Setting
+            // Only adjust the parameters(openTime or closeTime) if the closing or opening time of a class is not on a standard schedule
+            // A class with standard schedule opens at 'stdOpenTime' and closes at 'stdCloseTime
+            //
+            // Usage:
+            //	{
+            //		room: "Tech Lab 4-01",
+            //		openTime: 1100,
+            //		closeTime: 2130
+            //	}
+            const specialSchedule = [
+                {
+                    room: 'Tech Lab 6-06',
+                    // openTime: 1100,
+                    closeTime: 2130,
+                },
+            ];
+
+            // Metas
+            var weeklyMeta = {
+                dates: [],
+                rooms: [],
+            };
+
+            // D A T A
+            var currentDataSchedule = [];
+            var currentFormattedSchedule = [];
+
+            // I heard you like stats....eat em'
+            var nerdStats = {};
+
+            function initialize() {
+                var info = {
+                    location: 'NEW CAMPUS',
+                    room: 'Tech',
+                };
+
+                fetchTimetable(info, function () {
+                    for (var date of weeklyMeta.dates) {
+                        $('select.date_dropdown').append(
+                            $('<option>', {
+                                value: date,
+                                text: prettyDate(date),
+                            })
+                        );
+                    }
+                });
+            }
+
+            function run(info) {
+                reset();
+
+                fetchTimetable(info, function () {
+                    // Generate schedule's placeholders
+                    for (var room of weeklyMeta.rooms) {
+                        var schedule = {
+                            date: info.date,
+                            room: room,
+                            periods: generatePlaceholder(),
+                        };
+                        currentFormattedSchedule.push(schedule);
+                    }
+
+                    makeSchedule();
+                    sortSchedulebyRoom();
+                    createPages();
+
+                    console.log(
+                        'Current formatted schedule:',
+                        currentFormattedSchedule
+                    );
+                    console.log('Stats for nerds:', nerdStats);
+
+                    $('.about .stats').text(`(${getTotalNerdStats()} seconds)`);
+                });
+            }
+
+            function reset() {
+                var content = document.getElementById('content');
+                while (content.firstChild) {
+                    content.removeChild(content.firstChild);
+                }
+
+                currentDataSchedule = [];
+                currentFormattedSchedule = [];
+            }
+
+            function fetchTimetable(info, callback) {
+                var t1 = performance.now();
+                $.ajax({
+                    url:
+                        'http://s3-ap-southeast-1.amazonaws.com/open-ws/weektimetable' ||
+                        'https://ws.apiit.edu.my/web-services/index.php/open/weektimetable',
+                    dataType: 'json',
+                    success: function (result) {
+                        nerdStats.fetchTimetable = performance.now() - t1;
+
+                        filterData(info, result);
+
+                        callback();
+                    },
+                });
+            }
+
+            function makeSchedule() {
+                var t1 = performance.now();
+
+                for (var row of currentDataSchedule) {
+                    setPeriod(row);
+                }
+
+                nerdStats.makeSchedule = performance.now() - t1;
+            }
+
+            function setPeriod(row) {
+                for (var schedule of currentFormattedSchedule) {
+                    if (schedule.room != row.ROOM) continue;
+
+                    for (var period of schedule.periods) {
+                        // Determine the period when the class starts
+                        var initDiff = compareTime(
+                            row.time_start,
+                            period.time_start
+                        );
+                        if (initDiff >= 0 && initDiff < CONFIG.gapPeriod) {
+                            if (!period.class) period.class = [];
+                            period.class.push(row);
+
+                            // console.log('START PERIOD:', period.time_start, row.INTAKE);
+                            continue;
+                        }
+
+                        // Determine the period when the class ends
+                        var lastDiff = compareTime(
+                            row.time_end,
+                            period.time_start
+                        );
+                        if (lastDiff > 0 && lastDiff <= CONFIG.gapPeriod) {
+                            if (!period.class) period.class = [];
+                            period.class.push(row);
+
+                            // console.log(`FINAL PERIOD (${row.time_end}-${period.time_start}) :`, period.time_start, row.INTAKE);
+                            break;
+                        }
+
+                        // Determine the period when the class is on-going
+                        var durationLength = compareTime(
+                            row.time_end,
+                            row.time_start
+                        );
+                        if (
+                            lastDiff < durationLength &&
+                            lastDiff > CONFIG.gapPeriod
+                        ) {
+                            if (!period.class) period.class = [];
+                            period.class.push(row);
+
+                            // console.log(`DURATION PERIOD (${row.time_end}-${period.time_start}) :`, period.time_start, row.INTAKE);
+                            continue;
+                        }
+                    }
+                }
+            }
+
+            function filterData(info, result) {
+                var t1 = performance.now();
+
+                for (var R of result) {
+                    // Filtering
+                    if (R.LOCATION != info.location) continue;
+                    metaCollectDate(R.DATESTAMP_ISO);
+                    if (R.ROOM.substr(0, 4) != info.room) continue;
+                    metaCollectRooms(R.ROOM);
+                    if (R.DATESTAMP_ISO != info.date) continue;
+
+                    /* Setting up additional metadata for later use */
+                    R.time_start = parseTime(R.TIME_FROM);
+                    R.time_end = parseTime(R.TIME_TO);
+                    R.module_shortname = getModuleShortName(R.MODID);
+
+                    currentDataSchedule.push(R);
+                }
+
+                nerdStats.filterData = performance.now() - t1;
+
+                // console.log('Filtered data:', currentDataSchedule);
+            }
+
+            function generatePlaceholder() {
+                var placeholders = [];
+
+                for (var i = 0; i < CONFIG.totalPeriod; i++) {
+                    placeholders[i] = {
+                        time_start: addSecondtoTime(
+                            CONFIG.initialTime,
+                            CONFIG.gapPeriod * i
+                        ),
+                        time_end: addSecondtoTime(
+                            CONFIG.initialTime,
+                            CONFIG.gapPeriod * (i + 1)
+                        ),
+                    };
+                }
+
+                return placeholders;
+            }
+
+            function sortSchedulebyRoom() {
+                currentFormattedSchedule.sort(function (a, b) {
+                    var roomA = a.room.toUpperCase();
+                    var roomB = b.room.toUpperCase();
+
+                    if (roomA > roomB) {
+                        return 1;
+                    } else if (roomA < roomB) {
+                        return -1;
+                    } else {
+                        return 0;
+                    }
+                });
+            }
+
+            function getModuleShortName(m) {
+                var sn;
+                var arr = m.split('-');
+
+                for (let [index, value] of arr.entries()) {
+                    if (
+                        value == 'T' ||
+                        value == 'L' ||
+                        value == 'LAB' ||
+                        value == 'P' ||
+                        value == 'Lab'
+                    ) {
+                        sn = arr[index - 1];
+                        break;
+                    }
+                }
+
+                if (!sn) sn = arr[arr.length - 1];
+                if (sn.length <= 1) sn = '-'; // Undefined
+
+                return sn;
+            }
+
+            function isRoomAdded(room) {
+                if (dailySchedule.data.length == 0) return false;
+
+                for (v of dailySchedule.data) {
+                    if (v.room == data.ROOM) {
+                        return true;
+                    }
+                }
+
+                return false;
+            }
+
+            function createPages() {
+                var t1 = performance.now();
+
+                for (var schedule of currentFormattedSchedule) {
+                    var header = createHeaderDOM(schedule.room, schedule.date);
+                    var periods = '';
+
+                    for (period of schedule.periods) {
+                        periods += createPeriodDOM(period, schedule.room);
+                    }
+
+                    var page = `
+			<div class="page">
+				${header}
+				
+				<div class="schedule">
+					<div class="row header">
+						<div class="col-1">TIME</div>
+						<div class="col-2">INTAKE CODE</div>
+						<div class="col-3">MODULE CODE</div>
+					</div>
+					${periods}
+				</div>
+			</div>
+		`;
+
+                    $('#content').append(page);
+                }
+
+                nerdStats.generateDOM = performance.now() - t1;
+            }
+
+            function createHeaderDOM(room, date) {
+                var element = `
+		<div class="header">
+			<div class="left"><img src="images/apiit_group_logo_BW.png" class="logo" /></div>
+			<div class="right">
+				<div class="title">LABS RESERVATION SCHEDULE</div>
+				<div class="room">${room}</div>
+				<div class="date">${prettyDate(date)}</div>
+			</div>
+		</div>
+	`;
+
+                return element;
+            }
+
+            function createPeriodDOM(period, room) {
+                getAvailability = function () {
+                    if (!isClassOpen() || isClassClose()) return 'unavailable';
+                    return modules.length == 0 ? 'available' : 'unavailable';
+                };
+
+                getIntakeInformation = function () {
+                    var batchStored;
+                    var conflict = false;
+                    var courses = [];
+
+                    for (i of intakes) {
+                        var batch = i.match(/.+[0-9]{4,}/i)[0];
+
+                        var course = i.substr(
+                            batch.length,
+                            i.length - batch.length
+                        );
+                        courses.push(course);
+
+                        // Initial
+                        if (!batchStored) {
+                            batchStored = batch;
+                            continue;
+                        }
+
+                        // Return false if mixed batches are detected
+                        if (batchStored != batch) {
+                            conflict = true;
+                            break;
+                        }
+                    }
+
+                    var result = {
+                        conflict: conflict,
+                        intakes: intakes,
+                        batch: -1,
+                        courses: -1,
+                    };
+
+                    // If there's no mixed batches
+                    if (!conflict) {
+                        result.batch = batchStored;
+                        result.courses = courses;
+                    }
+
+                    return result;
+                };
+
+                getIntake = function () {
+                    if (!isClassOpen() || isClassClose())
+                        return CONFIG.closeMessage;
+
+                    var i = getIntakeInformation();
+                    var result;
+
+                    if (i.conflict) {
+                        result = intakes.join(CONFIG.intakeSeparator);
+                    } else if (!i.conflict && i.batch) {
+                        result =
+                            i.batch + i.courses.join(CONFIG.intakeSeparator);
+                    } else {
+                        result = CONFIG.availableMessage;
+                    }
+
+                    return result;
+                };
+
+                getModule = function () {
+                    if (!isClassOpen() || isClassClose()) return '';
+
+                    return modules.join(CONFIG.moduleSeparator);
+                };
+
+                isClassOpen = function () {
+                    return period.time_start >= getOpenTime(room);
+                };
+
+                isClassClose = function () {
+                    return period.time_start >= getCloseTime(room);
+                };
+
+                var intakes = [];
+                var modules = [];
+
+                var time_start = pad(period.time_start, 4);
+                var time_end = pad(period.time_end, 4);
+
+                if (period.class) {
+                    for (c of period.class) {
+                        if (!modules.includes(c.module_shortname))
+                            modules.push(c.module_shortname);
+
+                        // Prevent conflict of modules occupying the same slot
+                        if (modules.length > 1) {
+                            modules.splice(-1, 1);
+                            break;
+                        }
+
+                        if (!intakes.includes(c.INTAKE)) intakes.push(c.INTAKE);
+                    }
+                }
+
+                var element = `
+		<div class="row ${getAvailability()}">
+			<div class="col-1">${time_start} - ${time_end}</div>
+			<div class="col-2">${getIntake()}</div>
+			<div class="col-3">${getModule()}</div>
+		</div>
+	`;
+
+                return element;
+            }
+
+            function getOpenTime(room) {
+                for (var s of specialSchedule) {
+                    if (s.room == room) {
+                        if (s.openTime) return s.openTime;
+                    }
+                }
+
+                return CONFIG.stdOpenTime;
+            }
+
+            function getCloseTime(room) {
+                for (var s of specialSchedule) {
+                    if (s.room == room) {
+                        if (s.closeTime) return s.closeTime;
+                    }
+                }
+
+                return CONFIG.stdCloseTime;
+            }
+
+            function prettyDate(date) {
+                var options = {
+                    weekday: 'long',
+                    month: 'long',
+                    day: 'numeric',
+                };
+                var prettyDate = new Date(date).toLocaleString(
+                    'en-US',
+                    options
+                );
+
+                return prettyDate;
+            }
+
+            function metaCollectDate(date) {
+                for (var d of weeklyMeta.dates) {
+                    if (date == d) return;
+                }
+
+                weeklyMeta.dates.push(date);
+            }
+
+            function metaCollectRooms(room) {
+                for (var r of weeklyMeta.rooms) {
+                    if (room == r) return;
+                }
+
+                weeklyMeta.rooms.push(room);
+            }
+
+            function getTotalNerdStats() {
+                var sum = 0;
+                for (var k in nerdStats) {
+                    sum += nerdStats[k];
+                }
+                var seconds = (sum / 1000).toFixed(3);
+                return seconds;
+            }
+        </script>
+    </body>
+</html>
