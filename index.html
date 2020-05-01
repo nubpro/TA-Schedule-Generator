@@ -12,7 +12,7 @@
             <div id="content">
                 <!-- Schedule goes here -->
                 <div class="TA4Lyfe">
-                    <img src="<?php echo get_random_file('TA4Lyfe/1')?>" />
+                  <!-- <img src="<?php echo get_random_file('TA4Lyfe/1')?>" /> -->
                 </div>
             </div>
 
@@ -157,7 +157,7 @@
                 var t1 = performance.now();
                 $.ajax({
                     url:
-                        'http://s3-ap-southeast-1.amazonaws.com/open-ws/weektimetable' ||
+                        'https://s3-ap-southeast-1.amazonaws.com/open-ws/weektimetable' ||
                         'https://ws.apiit.edu.my/web-services/index.php/open/weektimetable',
                     dataType: 'json',
                     success: function (result) {
